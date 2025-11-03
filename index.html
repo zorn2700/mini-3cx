@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Mini 3CX</title>
+  <style>
+    body { font-family: Arial; text-align: center; margin-top: 40px; background: #f4f4f4; }
+    h1, h2, h3 { color: #2c3e50; }
+    input, button, select { margin: 8px; padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #ccc; width: 80%; max-width: 300px; }
+    button { background: #3498db; color: white; cursor: pointer; width: auto; padding: 12px 20px; }
+    button:hover { background: #2980b9; }
+    #auth, #callSection, #chatSection { margin-top: 30px; }
+    #callSection, #chatSection { display: none; }
+    video { width: 300px; border: 2px solid #3498db; border-radius: 10px; margin: 10px; }
+    #messages { height: 200px; border: 1px solid #ccc; margin: 15px auto; padding: 10px; overflow-y: scroll; background: white; border-radius: 8px; width: 80%; text-align: right; }
+    .msg { margin: 5px; padding: 8px; background: #ecf0f1; border-radius: 10px; display: inline-block; max-width: 70%; }
+    .self { background: #3498db; color: white; float: left; }
+    #authMessage { margin-top: 10px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Mini 3CX - نظام اتصال داخلي</h1>
+
+  <div id="auth">
+    <h2>تسجيل الدخول أو إنشاء حساب</h2>
+    <input type="text" id="username" placeholder="اسم المستخدم" />
+    <input type="password" id="password" placeholder="كلمة المرور" />
+    <input type="text" id="displayName" placeholder="اسمك المعروض" />
+    <button id="registerBtn">إنشاء حساب</button>
+    <button id="loginBtn">تسجيل الدخول</button>
+    <p id="authMessage" style="color: red;"></p>
+  </div>
+
+  <div id="callSection">
+    <h3>المتصلون:</h3>
+    <select id="users"></select>
+    <button id="callBtn">اتصال</button>
+    <button id="hangupBtn">إنهاء</button>
+    <div>
+      <video id="localVideo" autoplay muted></video>
+      <video id="remoteVideo" autoplay></video>
+    </div>
+  </div>
+
+  <div id="chatSection">
+    <h3>الدردشة</h3>
+    <div id="messages"></div>
+    <input type="text" id="msgInput" placeholder="اكتب رسالتك..." />
+    <button id="sendBtn">إرسال</button>
+  </div>
+
+  <!-- تحميل Socket.IO وتشغيل الكود بعد تحميل الصفحة -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const socket = io();
+      let localStream, peerConnection;
+      const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+      let currentUser = null;
+
+      const authDiv = document.getElementById('auth');
+      const callSection = document.getElementById('callSection');
+      const chatSection = document.getElementById('chatSection');
+
+      // عرض رسائل
+      function showMessage(msg, success = false) {
+        const el = document.getElementById('authMessage');
+        el.textContent = msg;
+        el.style.color = success ? 'green' : 'red';
+      }
+
+      // إنشاء حساب
+      document.getElementById('registerBtn').onclick = () => {
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        const name = document.getElementById('displayName').value.trim();
+        if (!username || !password || !name) return showMessage('املأ جميع الحقول');
+        socket.emit('register', { username, password, name }, (res) => {
+          showMessage(res.success ? res.message : res.message, res.success);
+        });
+      };
+
+      // تسجيل الدخول
+      document.getElementById('loginBtn').onclick = () => {
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        if (!username || !password) return showMessage('اسم المستخدم وكلمة المرور مطلوبان');
+        socket.emit('login', { username, password }, (res) => {
+          if (res.success) {
+            currentUser = res.user;
+            authDiv.style.display = 'none';
+            callSection.style.display = 'block';
+            chatSection.style.display = 'block';
+            showMessage('');
+          } else {
+            showMessage(res.message);
+          }
+        });
+      };
+
+      // تحديث المستخدمين
+      socket.on('users', (users) => {
+        const select = document.getElementById('users');
+        select.innerHTML = '<option value="">-- اختر --</option>';
+        users.forEach(u => {
+          if (u.id !== socket.id) {
+            const opt = document.createElement('option');
+            opt.value = u.id;
+            opt.text = u.name;
+            select.add(opt);
+          }
+        });
+      });
+
+      // مكالمة
+      document.getElementById('callBtn').onclick = () => {
+        const targetId = document.getElementById('users').value;
+        if (!targetId) return alert("اختر مستخدمًا");
+        socket.emit('call', targetId);
+        startCall(targetId);
+      };
+
+      function startCall(targetId) {
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+          .then(stream => {
+            localStream = stream;
+            document.getElementById('localVideo').srcObject = stream;
+            peerConnection = new RTCPeerConnection(config);
+            stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+            peerConnection.onicecandidate = e => {
+              if (e.candidate) socket.emit('candidate', { to: targetId, candidate: e.candidate });
+            };
+            peerConnection.ontrack = e => {
+              document.getElementById('remoteVideo').srcObject = e.streams[0];
+            };
+            return peerConnection.createOffer();
+          })
+          .then(offer => peerConnection.setLocalDescription(offer))
+          .then(() => socket.emit('offer', { to: targetId, offer: peerConnection.localDescription }))
+          .catch(err => alert("خطأ: " + err.message));
+      }
+
+      socket.on('offer', (data) => {
+        if (confirm(data.from + ' يتصل بك، تقبل؟')) {
+          startCall(data.fromId);
+          peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer))
+            .then(() => peerConnection.createAnswer())
+            .then(answer => peerConnection.setLocalDescription(answer))
+            .then(() => socket.emit('answer', { to: data.fromId, answer: peerConnection.localDescription }));
+        }
+      });
+
+      socket.on('answer', (data) => {
+        peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+      });
+
+      socket.on('candidate', (data) => {
+        if (peerConnection) peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+      });
+
+      document.getElementById('hangupBtn').onclick = () => {
+        if (peerConnection) peerConnection.close();
+        document.getElementById('remoteVideo').srcObject = null;
+        if (localStream) localStream.getTracks().forEach(t => t.stop());
+      };
+
+      // دردشة
+      document.getElementById('sendBtn').onclick = () => {
+        const msg = document.getElementById('msgInput').value.trim();
+        if (!msg) return;
+        socket.emit('message', msg);
+        addMessage('أنت: ' + msg, true);
+        document.getElementById('msgInput').value = '';
+      };
+
+      socket.on('message', (data) => {
+        addMessage(data.name + ': ' + data.msg, false);
+      });
+
+      function addMessage(text, isSelf) {
+        const div = document.createElement('div');
+        div.className = 'msg' + (isSelf ? ' self' : '');
+        div.textContent = text;
+        document.getElementById('messages').appendChild(div);
+        div.scrollIntoView();
+      }
+
+      document.getElementById('msgInput').addEventListener('keypress', e => {
+        if (e.key === 'Enter') document.getElementById('sendBtn').click();
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "name": "mini-3cx",
+  "version": "1.0.0",
+  "description": "نظام اتصال داخلي باستخدام WebRTC وSocket.IO",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "voip",
+    "webrtc",
+    "socket.io",
+    "3cx",
+    "chat",
+    "video-call"
+  ],
+  "author": "zorn2",
+  "license": "MIT",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "sqlite3": "^5.1.7"
+  },
+  "engines": {
+    "node": ">=18.x"
+  }
+}
